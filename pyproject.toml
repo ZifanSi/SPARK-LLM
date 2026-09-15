@@ -1,0 +1,15 @@
+[project]
+name = "spark-llm-summarization"
+version = "0.1.0"
+description = "Scalable Spark + LLM long document summarization (ECE 750 T39 course project)"
+requires-python = ">=3.10"
+dependencies = [
+    "pyspark>=3.5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

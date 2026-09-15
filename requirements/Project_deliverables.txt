@@ -1,0 +1,103 @@
+﻿Course project
+
+
+Overview:
+
+
+* A term-long group project that exercises the steps involved in designing, implementing and evaluating a scalable computer system (software, hardware or co-design).
+
+
+* Student groups have the flexibility of choosing the problem, hardware platform (e.g., parallel shared memory or shared-noting distributed) and implementation framework.
+
+
+* It is important that the proposed solution is technically sound and experimental methodology is justifiable (e.g., test bed, choice of dataset and evaluation metrics).
+
+
+* Depending on the class size, each group will have up to 3, 4 or 5 members.
+
+
+The course project is worth 45% of the total grade:
+
+
+1. Project proposal 5%
+2. Project presentation 20%
+3. Project report 20%
+
+
+Project deliverables (due dates will be posted on LEARN):
+
+
+1. Project proposal - a brief description of the problem of interest, its scalability requirements, overview of anticipated solution design, research methodology and work plan. Please try to cite related work found in the literature, e.g, ACM Digital Library and IEEE Xplore. Please include names of all group members. 
+
+
+Resources:
+A well known guide to writing short research proposals. 
+On the art of writing proposals.
+
+
+2. Project presentation - A group presentation of the completed project; followed by a ~3-minute Q&A. All group members are required to participate in the presentation. Please feel free to use the conference presentation slide decks listed here as reference to structure your own presentation. (If you want to use UWaterloo/ECE presentation templates, you can download them from here.) Note that after the project presentation, you are free to update/improve your implementation and project report.
+
+
+3. Project report - problem definition and context, scope of contribution, solution design (rationalize design choices and the implementation approach), evaluation methodology (including datasets used for evaluation) and results, and future work. Also, try to highlight how your contribution compares with the state-of-the art or at least key related work found in the literature. The report should be at least 4 pages excluding references in the IEEE double column format (download Word/LaTex templates from here). If required, you can add an appendix.
+
+
+4. Implementation - upload your code to LEARN dropbox (in a zip file or a tarball). Include a brief “how-to” document that provides instructions on how to run your code on the target hardware platform. The document should provide enough details to help reproduce the experiments in the project report; also, include download URL/file location of the datasets. Please do not upload input datasets or large output files to LEARN dropbox. Do keep a backup copy of your code, for example on GitLab: git.uwaterloo.ca. Please do not post your code in a public repository (e.g., GitHub free tier).
+
+
+Instructions:
+
+
+* Join a "Project" group on LEARN.
+* Upload all project deliverables (proposal, presentation slide deck, report and code) to the group dropbox labeled "Project".
+* Use a unique filename for each item uploaded.
+
+
+Project ideas (please add project idea/group # in the table below):
+Project 
+	Group # on LEARN
+	1. Parallel/distributed deep neural network training, e.g., data, model, tensor and pipeline -parallel training.
+	
+
+	2. Scalable long-context LLM inference.
+	
+
+	3. Scalable retrieval-augmented generation, traditional RAG or GraphRAG.
+	
+
+	4. Scalable federated learning.
+	
+
+	5. Low-bit quantization in deep neural networks.
+	
+
+	6. Scalable LLM distillation.
+	
+
+	7. Efficient neural architecture search (NAS).
+	
+
+	8. Apache Spark and LLM-based distributed long document summarization (resources).
+	
+
+	9. Scalable approximate k-Nearest Neighbor search in large vector data, e.g., H/NSW. (The focus can be index construction and/or search. Contact the instructor if you want to work with some existing code written in the MPI and CUDA.)
+	
+
+	10. Scalable clustering in large-scale high-dimensional data, e.g., H/DBSCAN. (Contact the instructor if you want to work with some existing code written in the HIP GPU computing framework.)
+	
+
+	11. Scalable genome sequence alignment, e.g., MUMmer.
+	
+
+	12. Scalable convolution for deep neural networks, e.g., Cook-Toom and Winograd algorithms.
+	
+
+	13. Scalable genome sequence alignment, e.g., MUMmer.
+	
+
+	14. Scalable quorum replication in Chord like data stores.
+	
+
+	15. Add project title here.
+	
+
+	16. Add project title here.

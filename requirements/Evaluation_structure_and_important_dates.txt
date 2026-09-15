@@ -1,0 +1,62 @@
+﻿ECE 750 T39 Scalable Computer System Design
+
+
+Class schedule and location
+* Lecture: Tuesdays and Thursdays 2:30PM - 3:50PM in EIT 3151
+* Student hours: Thursdays 1:00PM - 2:00PM in DC 2536
+Instructor
+Tahsin Reza (tahsin.reza@uwaterloo.ca, https://ece.uwaterloo.ca/~treza/)
+Evaluation structure
+* Assignments 15%
+   * A short programming assignment 7% (group)
+   * Writing paper reviews 8% (individual, two reviews, one page each)
+* Two in-class tests 30% (individual, closed book, 45 minutes each)
+* Leading paper discussion and class participation 10%
+* Course project 45% (group)
+   * Project proposal 5%
+   * Project presentation 20%
+   * Project report 20%
+(65% is the minimum passing grade for Master’s students, 75% is the minimum passing grade for PhD students.)
+Instructions
+* Join an assignment group and a project group on LEARN.
+* Upload all deliverables to the individual/group dropbox on LEARN.
+* Use a unique filename for each item uploaded.
+* Please do not use Generative AI for deliverables.
+
+
+Piazza 
+Signup Link: https://piazza.com/uwaterloo.ca/fall2026/ece750topic39  
+Access Code: k3q8v7av89o
+
+
+Outline: https://outline.uwaterloo.ca/viewer/view/np6am9 (important dates will be announced on LEARN)
+
+
+Important dates (tentative, will be posted on LEARN again)
+Week
+	Date
+	Deliverables
+	5
+	Oct 06
+	Test 1
+	8
+	Oct 09
+	Project proposal due
+	8
+	Oct 19
+	Paper review 1 due
+	9
+	Oct 27 - Oct 30
+	Programming assignment due (please set up an appointment with the instructor to show your work by October 23)
+	12
+	Nov 17
+	Test 2 
+	13
+	Nov 19
+	Paper review 2 due
+	14
+	Dec 03 and Dec 08
+	Project presentation (please add project title and group information here by November 20)
+	15
+	Dec 11
+	Project report and other deliverables due
