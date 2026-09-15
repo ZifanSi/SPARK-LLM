@@ -4,8 +4,7 @@
 flowchart LR
     S0["Re-run at 1, 2, 4, 8, 16 executors"]
 
-    subgraph DIST["Distributed pipeline — Apache Spark"]
-        direction LR
+    subgraph DIST["Distributed pipeline - Apache Spark"]
         A1[Long documents] --> B1[Ingest as DataFrame]
         B1 -->|flatMap| C1[Chunk to fit context window]
         C1 -->|parallel LLM calls, retry on failure| D1[Executors summarize chunks]
@@ -13,7 +12,6 @@ flowchart LR
     end
 
     subgraph BASE["Single-node baseline"]
-        direction LR
         A2[Long documents] --> B2[Sequential chunk + summarize]
         B2 -->|merge| C2[Final summary - baseline]
     end
