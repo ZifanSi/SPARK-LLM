@@ -1,23 +1,23 @@
 # Pipeline Workflow
 
 ```mermaid
-flowchart LR
+graph LR
     S0["Re-run at 1, 2, 4, 8, 16 executors"]
 
     subgraph DIST["Distributed pipeline - Apache Spark"]
-        A1[Long documents] --> B1[Ingest as DataFrame]
-        B1 -->|flatMap| C1[Chunk to fit context window]
-        C1 -->|parallel LLM calls, retry on failure| D1[Executors summarize chunks]
-        D1 -->|reduce| E1[Final summary - distributed]
+        A1["Long documents"] --> B1["Ingest as DataFrame"]
+        B1 -->|flatMap| C1["Chunk to fit context window"]
+        C1 -->|"parallel LLM calls, retry on failure"| D1["Executors summarize chunks"]
+        D1 -->|reduce| E1["Final summary - distributed"]
     end
 
     subgraph BASE["Single-node baseline"]
-        A2[Long documents] --> B2[Sequential chunk + summarize]
-        B2 -->|merge| C2[Final summary - baseline]
+        A2["Long documents"] --> B2["Sequential chunk + summarize"]
+        B2 -->|merge| C2["Final summary - baseline"]
     end
 
     S0 -.-> D1
-    E1 --> EVAL[Evaluate: runtime, throughput, speedup, ROUGE-L]
+    E1 --> EVAL["Evaluate: runtime, throughput, speedup, ROUGE-L"]
     C2 --> EVAL
 ```
 
@@ -72,3 +72,7 @@ All dates are tentative and should be confirmed on LEARN.
 - **Project presentation - December 3 or 8:** Completed-project presentation with participation from every group member, followed by approximately three minutes of Q&A.
 - **Project report - December 11:** At least four pages excluding references, using the IEEE double-column format.
 - **Implementation package - December 11:** Code archive and a reproduction how-to with dataset locations. Do not include input datasets or large output files.
+
+---
+
+Diagram syntax reference: https://docs.github.com/en/get-started/writing-on-github/working-with-advanced-formatting/creating-diagrams#creating-mermaid-diagram
