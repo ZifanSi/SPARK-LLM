@@ -30,21 +30,6 @@ notebooks/        Exploratory notebooks
 tests/            Unit tests
 ```
 
-## Course deliverables checklist
-
-- [ ] Project proposal (5%)
-- [ ] Paper review 1 (individual)
-- [ ] Programming assignment (group, 7%)
-- [ ] Test 1
-- [ ] Paper review 2 (individual)
-- [ ] Test 2
-- [ ] Project presentation (20%)
-- [ ] Project report (20%, IEEE double-column, >= 4 pages excl. references)
-- [ ] Implementation upload (zip/tarball + how-to doc) to LEARN dropbox
-- [ ] Backup copy of code on git.uwaterloo.ca (GitLab) — do not use a public repo for course code
-
-See `Requirements/Evaluation_structure_and_important_dates.txt` for exact dates (subject to change on LEARN)
-and `Requirements/Project_deliverables.txt` for full deliverable descriptions.
 
 ## Running the project
 
