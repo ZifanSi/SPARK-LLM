@@ -17,14 +17,14 @@ Our study asks whether **document-length heterogeneity** creates meaningful load
 
 Previous work already shows that:
 
-- skewed workloads can create stragglers, and mitigating skew has its own cost [1];
-- LLM inference cost depends on more than input length, including generated tokens and batching [2,3];
-- Spark can be combined with LLM processing [4];
-- long documents can be processed using split-and-merge LLM workflows [5];
-- application completion time matters when LLM calls depend on one another [6];
-- performance bottlenecks should be measured rather than assumed [7].
+- uneven workloads can leave some workers running much longer than others, while balancing the work adds extra overhead [1];
+- LLM processing time depends not only on input length, but also on generated output length and how requests are batched [2,3];
+- Spark/PySpark can be used to run data-processing workflows that include LLM calls [4];
+- long documents can be split into smaller chunks, summarized separately, and then merged into a final summary [5];
+- when later LLM calls depend on earlier results, one slow task can delay the completion of the whole workflow [6];
+- we should measure where the actual performance bottleneck is instead of assuming what causes the slowdown [7].
 
-We are **not proposing a new scheduler**. We are testing **when token-aware partitioning is useful, when ordinary Spark scheduling is already enough, and when balancing overhead costs more than it saves**.
+We are **not proposing a new scheduler**. We are testing **when token-aware partitioning is useful, when ordinary Spark scheduling is already enough, and when the extra work required for balancing takes more time than it saves**.
 
 ---
 
@@ -32,19 +32,19 @@ We are **not proposing a new scheduler**. We are testing **when token-aware part
 
 ### Objective
 
-Determine when document-length variability hurts runtime and load balance, and when the benefit of workload-aware partitioning is larger than its overhead.
+Determine when differences in document length cause uneven work across GPU workers and increase total job completion time, and when token-aware partitioning saves more time than the extra work needed to perform the balancing.
 
 ### Main research question
 
-> **How does document-length heterogeneity affect completion time and load balance in Spark-based LLM summarization, and under what conditions does workload-aware partitioning improve scalability?**
+> **How do differences in document length affect total job completion time and how evenly work is distributed across GPU workers, and when does token-aware partitioning improve performance?**
 
 ### Subquestions
 
-1. With the same document count and approximately the same total source-token volume, does higher document-length variability increase runtime and imbalance?
-2. When does input-token-balanced partitioning perform better than equal document-count partitioning, and does the answer change as we add GPU workers?
-3. Does using more, smaller Spark partitions already remove most of the imbalance?
-4. If fixed-size chunks are scheduled independently, does document-level balancing still provide useful additional benefit?
-5. At what workload size does the cost of token-aware partitioning become smaller than the runtime it saves?
+1. With the same number of documents and roughly the same total source-token count, does greater variation in document length make some workers take much longer than others?
+2. When does input-token-balanced partitioning reduce total job time compared with equal document-count partitioning, and how does this change as we add GPU workers?
+3. Can using more, smaller Spark partitions reduce most of the imbalance even without token-aware partitioning?
+4. If fixed-size chunks are scheduled independently across workers, does balancing whole documents by token count still provide additional benefit?
+5. How large does the workload need to be before the time saved by token-aware partitioning becomes greater than the overhead of token counting, sorting, assignment, and repartitioning?
 
 ---
 
@@ -69,7 +69,7 @@ flowchart TD
     I --> J[Collect runtime, task, worker, token, chunk and overhead measurements]
 ```
 
-The exact Spark-to-GPU mapping will be verified during the feasibility pilot. The intended design is that each GPU worker uses a persistent model replica so that adding GPU workers increases actual inference capacity rather than only adding CPU-side Spark executors.
+Each GPU worker will use its own GPU and keep one LLM copy loaded. Adding more workers therefore adds more GPUs that can process LLM requests in parallel. We will verify this setup during the pilot.
 
 ### Important Spark distinction
 
@@ -80,7 +80,7 @@ We control:
 
 Spark controls which available worker executes each partition task.
 
-We are therefore studying **partition composition and task granularity**, not manually assigning specific documents to named machines.
+We control how documents are grouped into Spark partitions and how large those partitions are. Spark decides which available worker runs each partition.
 
 ---
 
@@ -96,10 +96,12 @@ The core study varies three things:
 | **Partitioning policy** | Equal document-count / input-token-balanced |
 | **GPU workers (`p`)** | 1 and additional comparable GPUs available to us |
 
-Across low-, moderate-, and high-variability workloads, we will keep:
+Across low-, moderate-, and high-variability workloads, we will keep approximately the same:
 
-- document count matched;
-- total source-token volume approximately matched.
+- number of documents;
+- total source-token count.
+
+We will vary the document-length distribution while keeping document count and total source-token volume approximately matched. The actual LLM work may still differ because workloads can produce different numbers of chunks, generated tokens, and merge calls, so we will measure these during execution.
 
 We will report:
 
@@ -111,21 +113,23 @@ We will report:
 - actual model-input and generated-token counts;
 - merge-call counts.
 
-If controlled workloads require regrouping text, we will also validate the main comparison on intact documents.
+Artificially regrouping text may change factors other than document length, such as content difficulty, generated output length, or chunk/merge behavior, which could also affect runtime.
+
+Therefore, we will repeat the same partitioning comparison on the original, unchanged documents to check whether the result still holds.
 
 ### 4.2 What stays fixed
 
 After a feasibility pilot, the main comparisons will keep constant:
 
-- model;
-- tokenizer;
-- numerical precision;
-- prompts;
-- chunk size;
-- summarization structure;
-- output-token limits;
-- batching policy;
-- cache policy.
+- **model** — the same LLM and model size;
+- **tokenizer** — the same method used to convert text into tokens;
+- **numerical precision** — the same format used for model calculations, such as FP16 or BF16;
+- **prompts** — the same instructions for chunk summarization and final merging;
+- **chunk size** — the same maximum number of tokens per chunk;
+- **summarization structure** — the same split → summarize → merge workflow;
+- **output-token limits** — the same maximum generated length;
+- **batching policy** — the same rule for grouping requests for GPU processing;
+- **cache policy** — the same rules for using or reusing cached model state.
 
 The intended summarization structure is:
 
@@ -133,113 +137,170 @@ The intended summarization structure is:
 2. summarize the chunks;
 3. merge the chunk summaries into one final summary.
 
-The pilot will verify that this fits the selected model context window and GPU memory. Silent truncation is not acceptable. If a one-step merge cannot fit safely, we will use a fixed context-safe rule while keeping the same rule across experiments.
+The pilot will check that:
+
+- each chunk fits within the model's context window;
+- the model and inference workload fit in GPU memory;
+- all chunk summaries fit into the final merge step.
+
+We will not allow inputs to be silently cut off if they are too long. If all chunk summaries do not fit into one merge request, we will use the same fixed multi-step merge process in every experiment.
 
 ### 4.3 Main partitioning policies
 
-Both policies receive the **same documents**, use the **same `K`**, and run with the **same `p`**.
+Both policies will use the same documents, the same number of Spark partitions (`K`), and the same number of GPU workers (`p`).
 
 #### Policy A: equal document-count
 
-Documents are assigned using a seeded, length-independent ordering so that partition document counts differ by at most one.
+Documents remain unchanged and are randomly ordered using a fixed seed, without considering document length. They are then distributed so each partition receives nearly the same number of documents.
 
-This is the simple baseline.
+This is our baseline.
 
 #### Policy B: input-token-balanced
 
-Documents are assigned so that total source-token counts are approximately balanced across partitions. We will sort documents by decreasing source-token count and assign each next document to the partition with the lowest current token total.
+Documents remain unchanged, but we group them so each partition has roughly the same total source-token count. We sort documents from longest to shortest and repeatedly place the next document into the partition that currently has the lowest total token count.
 
-This is an existing assignment heuristic, not a new algorithm.
-
-Input-token count is only an estimate of work. We will separately record generated tokens, chunk counts, merge work, and actual task duration to determine when token totals do or do not predict execution cost.
+Source-token count is only an estimate of work, so we will also record generated tokens, chunk counts, merge work, and actual task time.
 
 ### 4.4 Strong scaling
 
 Strong scaling is part of the core evaluation.
 
-We keep the same document workload and increase the number of GPU workers.
+We keep the same document workload and increase only the number of GPU workers.
 
-For the controlled comparison:
+For each comparison:
 
-- the document set stays fixed;
-- `K` stays fixed;
-- the policy-specific partition assignment stays fixed;
-- only the number of concurrent GPU workers changes.
+- the document set stays the same;
+- the number of Spark partitions (`K`) stays the same;
+- documents stay assigned to the same partitions;
+- only the number of active GPU workers (`p`) changes.
 
-We will choose `K` to be at least as large as the maximum tested `p`.
+We choose `K` to be at least as large as the maximum `p`.
 
-We will compare runtime, speedup, and efficiency.
+We measure total runtime, speedup, and scaling efficiency.
 
-We will use at least three paired repetitions per configuration, randomize run order, and report run-to-run variation. The exact worker counts will depend on verified hardware access, while pilot runtime will determine the feasible workload size.
+Each configuration will be run at least three times in randomized order, and we will report the variation between runs. The exact worker counts and workload size will depend on available hardware and pilot results.
+
+
 
 ---
 
 ## 5. Supporting experiments
 
-These are **not additional main algorithms**. They help explain why token balancing helps or does not help.
-
 ### 5.1 Partition granularity
 
-At fixed `p`, compare:
+At a fixed number of GPU workers (`p`), we compare the same document workload using different numbers of Spark partitions (`K`):
 
-- `K = p`: fewer, larger partitions;
-- `K > p`, for example `K = 4p`: more, smaller partitions.
+- `K = p`: the number of partitions equals the number of GPU workers, so partitions are larger;
+- `K > p`: more, smaller partitions, for example `K = 4p`. The exact larger value will be finalized after the pilot. This gives Spark more tasks to schedule when a worker finishes the previous one.
 
 Purpose:
 
-> Determine whether ordinary Spark scheduling of smaller tasks already removes most of the imbalance.
+> Determine whether using more, smaller Spark partitions reduces load imbalance, and whether token-balanced partitioning still provides additional benefit when `K` is larger.
+
+```mermaid
+flowchart TD
+    A[Same documents and fixed p GPU workers] --> B{Partitioning policy}
+    B --> C1[Equal document-count]
+    B --> C2[Token-balanced]
+    C1 --> D1[K = p]
+    C1 --> D2[K > p, e.g. 4p]
+    C2 --> D3[K = p]
+    C2 --> D4[K > p, e.g. 4p]
+    D1 --> E[Compare runtime and load balance]
+    D2 --> E
+    D3 --> E
+    D4 --> E
+```
 
 ### 5.2 Chunk scheduling
 
-The core study keeps the chunks and merge work belonging to one document together.
+In the core study, all chunks from the same document stay together and are processed within the same Spark partition. In this supporting experiment, we allow fixed-size chunks from the same document to be scheduled independently. This allows chunks from one long document to run on different workers instead of waiting for one worker to process all of them.
 
-A supporting experiment compares this with allowing fixed-size chunks to be scheduled independently across workers.
+For this comparison, we keep the number of GPU workers (`p`) and chunk-processing Spark partitions (`K`) the same. The only change is whether chunks from the same document stay together or can be scheduled independently.
 
-We will preserve:
+We compare:
 
-- chunk boundaries;
-- prompts;
-- merge structure;
-- summary order.
+- **Document-level scheduling** — all chunks from the same document stay together;
+- **Independent chunk scheduling** — chunks from the same document may run on different GPU workers.
 
-Any shuffle, regrouping, synchronization, or merge cost introduced by independent chunk scheduling will be included in the complete-job measurement.
+We keep the following unchanged:
 
-We will analyze the chunk stage, merge stage, and full job separately where possible.
+- **chunk boundaries** — each document is split at the same points, so both experiments process exactly the same chunks;
+- **prompts** — the same LLM instructions are used for chunk summarization and final merging;
+- **merge structure** — chunk summaries are combined using the same sequence of merge steps;
+- **summary order** — chunk summaries are merged in the original document order, not in the order in which GPU workers finish them.
 
-Purpose:
+After chunk processing, summaries are regrouped by document and merged using the same procedure as in the core study.
 
-> Determine whether finer chunk-level scheduling makes document-level token balancing unnecessary.
+Any additional cost caused by independent chunk scheduling, including shuffle, regrouping, synchronization, and merge overhead, is included in the complete-job runtime.
 
-### 5.3 Overhead / break-even
+```mermaid
+flowchart TD
+    A[Same documents and same fixed-size chunks] --> B{Scheduling approach}
+    B --> C1[Document-level scheduling]
+    B --> C2[Independent chunk scheduling]
+    C1 --> D1[All chunks of one document stay together]
+    C2 --> D2[Chunks of one document may run on different GPU workers]
+    D1 --> E[Merge summaries by document]
+    D2 --> E
+    E --> F[Compare runtime and load balance]
+```
+
+### 5.3 When is token-aware partitioning worth the extra work?
 
 Token-aware partitioning is not free.
 
-At fixed worker count, partition count, and length distribution, we will vary total job size and include the cost of:
+At fixed worker count, partition count, and document-length distribution, we will vary the total workload size and measure the cost of:
 
 - token counting;
-- sorting;
-- assignment;
-- repartitioning / data movement;
-- scheduling and serialization where relevant.
+- sorting documents by token count;
+- assigning documents to balanced partitions;
+- reorganizing / moving documents into those partitions;
+- any additional Spark scheduling or data-transfer overhead caused by this process.
 
 Purpose:
 
-> Identify when the runtime saved through better load balance becomes larger than the extra balancing cost.
+> Find the total source-token volume at which token-aware partitioning saves more runtime than the extra time required to prepare the balanced partitions.
 
 ### 5.4 Reduced weak scaling
 
-Weak scaling will be run only on a limited subset.
+We will test weak scaling only for selected configurations of the two main partitioning policies.
 
-As `p` increases, we will increase:
+For both partitioning policies, we will increase the workload proportionally as the number of GPU workers (`p`) increases.
 
-- document count proportionally;
-- total source-token volume proportionally.
+We will increase both document count and total source-token volume while keeping:
 
-We will preserve the document-length distribution and `K/p`.
+- the same document-length distribution;
+- approximately the same number of Spark partitions per worker (`K/p`).
+
+The exact value of `p` will depend on the comparable GPUs available after the pilot.
+
+```mermaid
+flowchart TD
+    A[Selected document-length distribution] --> B{Partitioning policy}
+
+    B --> C1[Equal document-count]
+    B --> C2[Token-balanced]
+
+    C1 --> D1[1 GPU + 1x workload]
+    C1 --> D2[2 GPUs + 2x workload]
+    C1 --> D3[p GPUs + px workload]
+
+    C2 --> E1[1 GPU + 1x workload]
+    C2 --> E2[2 GPUs + 2x workload]
+    C2 --> E3[p GPUs + px workload]
+
+    D1 --> F[Compare runtime and weak-scaling efficiency]
+    D2 --> F
+    D3 --> F
+    E1 --> F
+    E2 --> F
+    E3 --> F
+```
 
 Purpose:
 
-> Test whether the system can handle proportionally more work as GPU capacity increases without a similar increase in runtime.
+> Determine whether increasing GPU capacity allows us to process proportionally more work in roughly the same amount of time.
 
 ### How the experiments relate
 
@@ -270,61 +331,82 @@ flowchart TD
 
 ### Primary measurements
 
-For each run we will collect:
+For each run, we will collect:
 
-- end-to-end job runtime through completed summaries;
-- Spark stage makespan;
-- task median duration;
-- task maximum duration;
-- max/median task-duration ratio;
-- worker activity and idle timelines;
-- documents per second;
-- source tokens per second.
+- **end-to-end job runtime** — total time from starting the job until all final summaries are produced;
+- **LLM-processing stage runtime** — time from the start of the first Spark task performing LLM work until the last such task finishes;
+- **median task duration** — typical task execution time;
+- **maximum task duration** — duration of the slowest task;
+- **max/median task-duration ratio** — how much slower the slowest task is compared with a typical task;
+- **worker activity and idle timelines** — when each GPU worker is processing work and when it is waiting idle;
+- **documents per second** — document-processing throughput;
+- **source tokens per second** — input-token-processing throughput.
+
+
+Example:
+
+```
+Token counting + partitioning:   5 s
+Spark setup/scheduling:          3 s
+LLM processing:                 60 s
+Final merge / other overhead:    7 s
+------------------------------------
+End-to-end runtime:             75 s
+```
 
 ### Measurements used to explain the result
 
 We will also record:
 
-- source tokens;
-- actual model-input tokens;
-- generated tokens;
-- chunk counts;
-- merge-call counts;
-- partitioning time;
-- sorting time;
-- scheduling time;
-- serialization time;
-- shuffle / data-movement time;
-- model initialization separately;
-- sampled GPU utilization as a supporting metric.
+- **source tokens** — total number of tokens in the original documents;
+- **actual model-input tokens** — tokens actually sent to the LLM, including prompts and any intermediate summaries;
+- **generated tokens** — total number of tokens produced by the LLM;
+- **chunk count** — total number of document chunks processed;
+- **merge-call count** — number of LLM calls used to combine chunk summaries;
+- **partitioning time** — time spent creating the document-to-partition assignment;
+- **sorting time** — time spent sorting documents by token count for token-aware partitioning;
+- **scheduling time** — time Spark spends preparing and assigning tasks for execution;
+- **serialization time** — time spent converting data into a form that Spark can transfer between processes or machines;
+- **shuffle / data-movement time** — time spent moving data between Spark partitions or workers;
+- **model initialization time** — time spent loading and preparing the LLM on each GPU worker;
+- **GPU utilization** — sampled percentage of GPU capacity being used while the job runs.
 
-Task p95 will be used only when enough task samples exist. p99 is not a core metric because the number of tasks in a run may be too small for it to be stable.
+These measurements help explain whether runtime differences come from workload size, LLM generation, load imbalance, or Spark/partitioning overhead.
+
+We may also report the 95th percentile of task duration (p95) when a run contains enough tasks. This shows how slow the longest few tasks are compared with typical tasks. We will not use p99 because the number of tasks may be too small for it to be reliable.
 
 ### Scaling metrics
 
-For strong scaling:
+For strong scaling, we keep the workload fixed and increase the number of GPU workers (`p`).
 
-- speedup: `S(p) = T(1) / T(p)`;
-- efficiency: `S(p) / p`.
+- **Speedup** — how many times faster the job becomes compared with one GPU worker:
 
-For weak scaling, we will compare runtime while workload and worker count increase proportionally.
+  `S(p) = T(1) / T(p)`
+
+  where `T(1)` is the runtime with one GPU worker and `T(p)` is the runtime with `p` GPU workers.
+
+- **Scaling efficiency** — how close the speedup is to ideal linear scaling:
+
+  `Efficiency = S(p) / p`
+
+  For example, with 4 GPU workers, a speedup of 4× would give an efficiency of 1.0, or 100%.
+
+For weak scaling, we increase the workload proportionally with the number of GPU workers and compare whether runtime stays approximately constant.
 
 ---
 
 ## 7. Expected contribution
 
-The project should provide an empirical answer to:
+The project will provide empirical evidence about:
 
-- when document-length heterogeneity becomes a real performance problem;
-- when source-token balancing improves performance;
-- when ordinary Spark scheduling with more partitions is sufficient;
+- when differences in document length create significant load imbalance and longer job runtime;
+- when source-token-balanced partitioning improves performance;
+- when using more, smaller Spark partitions is already sufficient;
 - when independent chunk scheduling is sufficient;
-- how these effects change as GPU-worker count increases;
-- when partitioning overhead costs more than it saves.
+- how these results change as the number of GPU workers increases;
+- when the extra cost of token-aware partitioning is greater than the runtime it saves.
 
-We are **not claiming a new scheduling algorithm**.
-
-A result showing that token balancing does not help under some conditions is still useful because it identifies when the simpler Spark configuration is enough.
+If token balancing does not help in some cases, that is still a useful result because it shows when a simpler Spark configuration is sufficient.
 
 ---
 
@@ -332,76 +414,80 @@ A result showing that token balancing does not help under some conditions is sti
 
 | Risk | What we will do |
 |---|---|
-| Independent chunk scheduling removes most imbalance | Treat this as a valid result and inspect remaining merge-stage tails |
-| Source-token count predicts work poorly | Explain results using generated tokens, chunk counts, merge calls, and measured task durations |
-| Limited comparable GPUs | Limit scaling claims to worker configurations we can actually run |
-| LLM inference dominates Spark overhead | Measure and report this instead of assuming Spark is the bottleneck |
-| Controlled/regrouped workloads are unrealistic | Validate the main comparison on intact documents |
-| Experiment matrix becomes too large | Keep secondary variables fixed and run supporting experiments only on selected cases |
-| A faster run accidentally skips work | Verify complete document and chunk coverage |
-| Merge inputs exceed context | Enforce a context-safe merge rule and check for truncation |
+| Token-aware partitioning provides little benefit once chunks are scheduled independently | Treat this as a valid result and identify the conditions where simpler chunk-level scheduling is sufficient |
+| Source-token count does not accurately predict processing time | Use generated tokens, chunk counts, merge calls, and measured task durations to explain why some partitions still take longer |
+| Too few comparable GPUs are available | Limit scaling experiments and conclusions to the worker configurations we can actually test |
+| LLM inference dominates Spark overhead | Measure both and report where the runtime is actually spent instead of assuming Spark is the bottleneck |
+| Artificially changing document lengths may also change other factors that affect runtime | Repeat the main partitioning comparison on the original, unchanged documents |
+| The number of experiment combinations may become too large | Keep secondary variables fixed and run supporting experiments only on selected configurations |
+| A bug or scheduling issue may cause some documents or chunks to be skipped, making a run appear faster | Verify that every document and chunk is processed before comparing runtimes |
+| The combined chunk summaries may be too large for one final LLM merge call | Use a fixed multi-step merge procedure and verify that no summaries are silently truncated |
 
 ---
 
 ## 9. Optional extension
 
-Only if input-token balancing leaves substantial and explainable residual imbalance, we may test a simple **estimated-compute** policy that uses more information than source-token count.
+If source-token-balanced partitioning still leaves large differences in task runtime, we may test an **estimated-compute** partitioning policy.
 
-Possible inputs could include:
+Instead of using only source-token count, this policy would estimate the expected work for each document using factors such as:
 
 - source-token count;
-- expected generation work;
-- chunk / call count.
+- expected generated-token work;
+- number of chunks and LLM calls.
 
-This extension would be calibrated on separate pilot data and would not use future measured outputs from evaluation jobs.
+The estimate would be created using separate pilot runs, not using timing or output information from the evaluation runs themselves.
 
-It is **not required for the main project conclusions**.
+We would then balance partitions using this estimated workload instead of source-token count alone.
+
+This is optional and is not required for the main project results.
 
 ---
 
 ## 10. Work plan
 
 1. **Feasibility pilot**
-   - confirm available comparable GPUs;
-   - confirm Spark executors can use them;
-   - select a model that fits;
-   - validate the summarization structure and context limits;
-   - select and validate the dataset.
+   - confirm which comparable GPUs are available;
+   - verify that Spark workers can run LLM inference on those GPUs;
+   - choose an LLM model that fits the available GPU memory;
+   - verify that chunking and merging fit the model context limits;
+   - choose a document dataset with enough long documents and suitable variation in document length for the experiments;
 
 2. **Pipeline implementation**
-   - Spark + GPU execution;
-   - fixed chunk + merge summarization;
-   - equal-count partitioning;
-   - token-balanced partitioning.
+   - build the Spark + GPU execution pipeline;
+   - implement fixed-size chunking, chunk summarization, and final merging;
+   - implement equal document-count partitioning;
+   - implement source-token-balanced partitioning.
 
-3. **Instrumentation**
-   - task / stage timing;
-   - worker activity;
-   - token, chunk, merge, throughput, and overhead counters;
-   - output and truncation checks.
+3. **Measurement and correctness checks**
+   - record how long individual Spark tasks, the main LLM-processing stage, and the complete job take;
+   - record when each GPU worker is busy and when it is waiting idle;
+   - record the number of processed tokens, chunks, and merge calls, as well as throughput and the extra time required for token-aware partitioning;
+   - verify that every document and chunk is processed and that no LLM input is silently cut off because of context limits.
 
 4. **Core experiments**
-   - three variability levels;
-   - two partitioning policies;
-   - available GPU-worker counts;
-   - strong scaling.
+   - run the same type of workload with low, moderate, and high document-length variability while keeping document count and total source-token volume approximately matched;
+   - compare equal document-count and token-balanced partitioning on the same workload and worker configuration;
+   - repeat the comparison using the available numbers of comparable GPU workers;
+   - evaluate strong scaling by keeping the workload fixed, increasing the number of GPU workers, and measuring runtime, speedup, and scaling efficiency.
 
-5. **Selected supporting experiments**
-   - partition granularity;
-   - chunk scheduling;
-   - overhead / break-even;
-   - reduced weak scaling.
+5. **Supporting experiments**
+   - compare different numbers of Spark partitions;
+   - compare document-level and independent chunk scheduling;
+   - determine how large the workload must be before the runtime saved by token-aware partitioning is greater than the extra time spent counting tokens, sorting documents, assigning them to balanced partitions, and moving data;
+   - run reduced weak-scaling experiments on selected configurations.
 
 6. **Analysis**
-   - compare runtime and load balance;
-   - explain differences using realized work counters;
-   - identify the conditions where each approach is useful.
+   - compare runtime, load balance, and throughput;
+   - use measured task times, worker idle time, token counts, chunk counts, merge calls, and partitioning overhead to explain why one configuration performs better or worse than another;
+   - identify when each partitioning or scheduling approach is useful.
 
 Implementation work will be divided across:
 
 - workload construction and correctness;
 - Spark execution and partitioning;
 - instrumentation and benchmark analysis.
+
+We will save the experiment configurations, workload seeds, and results needed to reproduce the main experiments.
 
 ---
 
